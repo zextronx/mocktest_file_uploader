@@ -1,4 +1,4 @@
-import {useState} from 'react';
+import {useState, useEffect} from 'react';
 import {useDropzone} from 'react-dropzone';
 import {useDispatch, useSelector} from 'react-redux';
 import {Redirect} from 'react-router-dom';
@@ -6,15 +6,15 @@ import {Redirect} from 'react-router-dom';
 import {fileActions} from '../../actions';
 import './styles.css';
 
-const maxSize = 200;
+const maxFileSize = 2000000; // 2mb
+const availableDiskSpace = 10000000; // 10mb
 
 const fileSizeValidator = (file) => {
-    const sizeInMB = (file.size / (1024*1024)).toFixed(2);
 
-    if (sizeInMB > maxSize) {
+    if (file.size > maxFileSize) {
         return {
             code: 'file-too-large',
-            messgae: `File size is larger than ${maxSize} mb`
+            messgae: `File size is larger than ${maxFileSize / 1000000} mb`
         };
     }
 };
@@ -28,19 +28,32 @@ const toBase64 = file => new Promise((resolve, reject) => {
 
 const AddFile = () => {
     const [files, setFiles] = useState([]);
-    const {redirectTo} = useSelector(state => state.files);
+    const [noSpaceError, setNoSpaceError] = useState(null);
+    const [spaceConsumed, setSpaceConsumed] = useState(0);
+    const {redirectTo, files: fileList} = useSelector(state => state.files);
 
     const dispatch = useDispatch();
+
+    useEffect(() => {
+        const size = fileList.reduce((acc, curr) => acc + curr.size, 0);
+        setSpaceConsumed(size);
+    }, [fileList]);
+
+    useEffect(() => {
+        dispatch(fileActions.fileList());
+    }, [dispatch]);
 
     const {acceptedFiles, fileRejections, getRootProps, getInputProps} = useDropzone({
         validator: fileSizeValidator,
         accept: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/pdf',
         onDrop: async acceptedFiles => {
             const data = [];
+            let filesSize = spaceConsumed;
             for (let i = 0; i < acceptedFiles.length; i++) {
                 const {name, type, size} = acceptedFiles[i];
                 try {
                     const preview = await toBase64(acceptedFiles[i]);
+                    filesSize += size;
                     data.push({
                         name,
                         type,
@@ -49,6 +62,12 @@ const AddFile = () => {
                     })
                 } catch (e) {}
             }
+            if (filesSize > availableDiskSpace) {
+                setNoSpaceError(true);
+            } else {
+                setNoSpaceError(false);
+            }
+            setSpaceConsumed(filesSize);
             setFiles([...data]);
         }
     });
@@ -80,10 +99,13 @@ const AddFile = () => {
 
     return (
         <section className="row mt-5">
+            <div>
+                <span className="mb-3 badge rounded-pill bg-dark">{((availableDiskSpace - spaceConsumed) / 1000000).toFixed(3)} MB left</span>
+            </div>
             <div {...getRootProps({className: 'dropzone'})}>
                 <input {...getInputProps()} />
                 <p>Drag 'n' drop some files here, or click to select files</p>
-                <em>(Only files with less than 200 mb size will be accepted)</em>
+                <em>(Only files with less than 2 mb size will be accepted)</em>
             </div>
             <hr />
             <div className="row mt-5">
@@ -98,7 +120,7 @@ const AddFile = () => {
             </div>
 
             <div className="row mt-5">
-                <button disabled={!files.length} className="btn btn-outline-primary" onClick={handleUpload}>Upload</button>
+                <button disabled={!files.length || noSpaceError} className="btn btn-outline-primary" onClick={handleUpload}>Upload</button>
             </div>
         </section>
     );
